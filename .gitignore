@@ -1,0 +1,7 @@
+# Side Packages
+/Lib
+/Include
+/vault
+
+# Python Venv
+pyvenv.cfg
