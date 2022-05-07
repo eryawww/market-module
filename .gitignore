@@ -1,7 +1,10 @@
 # Side Packages
 /Lib
 /Include
+
+# Large Data
 /vault
 
-# Python Venv
+# Python
+**/__pycache__
 pyvenv.cfg
