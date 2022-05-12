@@ -1,5 +1,5 @@
 # Standard
-from typing import Callable
+from typing import Callable, Union
 import datetime
 
 # Module
@@ -7,6 +7,7 @@ import dataprovider
 
 # Site Lib
 import pandas as pd
+import pandas_ta as ta # Interface for TA-Lib
 
 # TODO: Implement multitimeframe
 class HistoricalMarket:
@@ -26,11 +27,15 @@ class HistoricalMarket:
 
         return self.data
 
-    def get(self, lookback:int) -> pd.DataFrame:
+    def get(self, lookback:int) -> Union[pd.DataFrame, None]:
         '''
             Get the data in lookback days
+            Return None in case of required more data
         '''
-        return self.data.iloc[-lookback:]
+        try:
+            return self.data.iloc[-lookback:]
+        except IndexError:
+            return None
 
 # TODO: Implement multiconditional
 class Strategy:
@@ -62,7 +67,6 @@ class Trade:
         self.closed = True
         self.exit_date = exit_date
         self.exit_price = exit_price
-    
 
 class Backtest:
     runningtrade:list[Trade] = []
@@ -73,21 +77,42 @@ class Backtest:
 
     def run(self, conditions:list[Strategy]):
         for days in range(len(self.market.full_data)):
+            # Get next market data
             self.market.next()
+
+            # Entry Points
             for condition in conditions:
                 if condition.entry(self.market):
                     self.runningtrade.append(Trade(self.market.data.index[-1], self.market.data.iloc[-1]['Close'], condition))
+
+            # Exit Points
             for trade in self.runningtrade:
                 if trade.exit(self.market):
                     trade.close(self.market.data.index[-1], self.market.data.iloc[-1]['Close'])
                     self.trade_list.append(trade)
                     self.runningtrade.remove(trade)
 
+def entry(market:HistoricalMarket) -> bool:
+    market.full_data['CDL_ENGULFING'] = market.full_data.ta.cdl_pattern(name="engulfing")
+    print(market.full_data[market.full_data['CDL_ENGULFING'] == -100])
+    # print(market.full_data[market.full_data['Close'].isnull()])
+    return False
+
+def exit(market:HistoricalMarket) -> bool:
+    return False
+
 if __name__ == '__main__':
-    def func(x:HistoricalMarket):
-        return x.data.iloc[-1]['Close'] > x.data.iloc[-1]['Open']
-    stragegy = [
-        Strategy('basic', func, func)
-    ]
-    test = Backtest('TLKM')
-    test.run(stragegy)
+    market = HistoricalMarket('TLKM')
+    entry(market)
+    # myStrategy = Strategy(
+    #     name = 'CandleStrategy',
+    #     entry_condition = entry,
+    #     exit_condition = exit
+    # )
+    # def entry(x:HistoricalMarket):
+    #     return x.data.iloc[-1]['Close'] > x.data.iloc[-1]['Open']
+    # stragegy = [
+    #     Strategy('basic', func, func)
+    # ]
+    # test = Backtest('TLKM')
+    # test.run(stragegy)
