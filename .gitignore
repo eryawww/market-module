@@ -2,6 +2,9 @@
 /Lib
 /Include
 
+# Vs Code
+/share
+
 # Large Data
 /vault
 

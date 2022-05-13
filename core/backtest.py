@@ -1,13 +1,17 @@
 # Standard
+import os
+import sys
 from typing import Callable, Union
 import datetime
 
+sys.path.append(os.path.dirname(__file__))
 # Module
 import dataprovider
 
 # Site Lib
 import pandas as pd
 import pandas_ta as ta # Interface for TA-Lib
+import numpy as np
 
 # TODO: Implement multitimeframe
 class HistoricalMarket:
@@ -37,82 +41,154 @@ class HistoricalMarket:
         except IndexError:
             return None
 
-# TODO: Implement multiconditional
+#TODO: Make stub since this is dynamic
 class Strategy:
-    def __init__(self, name, entry_condition:Callable[[HistoricalMarket], bool], exit_condition:Callable[[HistoricalMarket], bool]):
+    """
+        entry_condition: function(HistoricalMarket) return bool, whether we should buy or not
+        exit_condition: function(HistoricalMarket) return bool, whether we should sell or not
+        you can use multi stop_loss or take_profit by adding new variable to the kwargs and check that variable using first parameter in the entry_condition/exit_condition
+        parameter hint is None because we have to use python dynamicity in this case
+    """
+    def __init__(self, name, entry_condition:Callable[[HistoricalMarket], bool], exit_condition:Callable[[HistoricalMarket], bool], **kwargs):
         self.name = name
         self.entry_condition = entry_condition
         self.exit_condition = exit_condition
+        self.__dict__.update(kwargs)
 
     def entry(self, market:HistoricalMarket) -> bool:
         return self.entry_condition(market)
 
-    def close(self, market:HistoricalMarket) -> bool:
+    def exit(self, market:HistoricalMarket) -> bool:
         return self.exit_condition(market)
-    
+
 class Trade:
     """
         Ongoing Trade
+        Entry is at one point of time
+        Exit is at multiple point of time (list[datetime], list[float])
     """
-    def __init__(self, entry_date:datetime.datetime, entry_price:float, condition:Strategy):
-        self.date = entry_date
-        self.price = entry_price
-        self.condition = condition
+    exit_date = []
+    exit_price = []
+    exit_amount = []
+    def __init__(self, amount:float):
+        self.initial_amount = amount
+        self.amount_left = amount
         self.closed = False
 
+    def _post_init(self, entry_date:datetime.datetime, entry_price:float, strategy:Strategy):
+        self.entry_price = entry_price
+        self.entry_date = entry_date
+        self.strategy = strategy
+
     def exit(self, market:HistoricalMarket) -> bool:
-        return self.condition.close(market)
+        return self.strategy.exit(market)
 
-    def close(self, exit_date:datetime.datetime, exit_price:float):
-        self.closed = True
-        self.exit_date = exit_date
-        self.exit_price = exit_price
+    def close(self, exit_date:datetime.datetime, exit_price:float, amount:float, closed:bool):
+        self.exit_date.append(exit_date)
+        self.exit_price.append(exit_price)
+        self.exit_amount.append(amount)
+        self.amount_left -= amount
+        self.closed = closed
 
+#TODO: Implement Fee
+#TODO: Implement trade_graph for clear entry exit
+class Management:
+    """
+        All a trade opportunity will be send here
+        entry_confirmation: function(mgt:Management, price:float, strategy) return Trade or None
+        exit_confirmation: function(mgt:Management, price:float, trade:Trade) return amount, 0 for cancel -1 for full sell from this trade
+        mgt is used to check initial balance or current balance
+    """
+    running_trade:list[Trade] = []
+    done_trade:list[Trade] = []
+    def __init__(self, initial_balance:float, entry_confirmation:Callable[[None, float, Strategy], Trade], exit_confirmation:Callable[[None, float, Trade], float], **kwargs):
+        self.balance = initial_balance
+        self.initial_balance = initial_balance
+        self.entry_confirmation = entry_confirmation
+        self.exit_confirmation = exit_confirmation
+        self.__dict__.update(kwargs)
+
+    def buy(self, date:datetime.datetime, price:float, strategy:Strategy):
+        trade = self.entry_confirmation(self, price, strategy)
+        if trade is None:
+            return
+
+        trade._post_init(date, price, strategy)
+        assert trade.amount_left*price <= self.balance
+        self.open_trade(trade)
+        self.balance -= trade.amount_left * price
+
+    def sell(self, date:datetime.datetime, price:float, trade:Trade):
+        amount = self.exit_confirmation(self, price, trade)
+        if amount == 0:
+            return
+        elif amount == -1:
+            amount = trade.amount_left
+
+        assert amount <= trade.amount_left
+        self.close_trade(trade, amount, date, price)
+        self.balance += amount * price
+
+    def print_stats(self):
+        print('------------------ BALANCE ------------------')
+        print('Initial Balance\t: ', self.initial_balance)
+        print('Current Balance\t: ', self.balance, 'ROI: ', (self.balance-self.initial_balance)/self.initial_balance*100, '%')
+        print('Change \t: ', self.balance-self.initial_balance)
+        print('------------------ TRADE ------------------')
+        print('Open Trade\t: ', len(self.running_trade))
+        print('Done Trade\t: ', len(self.done_trade))
+        print('------------------ DONE TRADE ------------------')
+        for trade in self.done_trade:
+            print('Date\t: ', trade.entry_date)
+            print('Entry Price\t: ', trade.entry_price)
+            print('Amount\t: ', trade.initial_amount)
+            entry_total = trade.entry_price*trade.initial_amount
+            print('ROI\t: ', (entry_total-(trade.initial_amount-trade.amount_left)*trade.entry_price)/entry_total*100, '%')
+            print('------------------')
+    
+    def open_trade(self, trade:Trade):
+        self.running_trade.append(trade)
+
+    def close_trade(self, trade:Trade, amount:float, exit_date:datetime.datetime, exit_price:float):
+        # In case precision error
+        if amount == -1:
+            amount = trade.amount_left
+        if trade.amount_left-amount <= 0.0000000001:
+            trade.close(exit_date, exit_price, amount, True)
+            self.running_trade.remove(trade)
+            self.done_trade.append(trade)
+        else:
+            trade.close(exit_date, exit_price, amount, False)
+
+#TODO ADD LIMIT ORDER
+#TODO ADD MULTI SYMBOLS
 class Backtest:
-    runningtrade:list[Trade] = []
-    trade_list:list[Trade] = []
-    def __init__(self, stock:str):
+    management = Management(
+        initial_balance = 1_000_000_000,
+        entry_confirmation = lambda a, b, c: Trade(1),
+        exit_confirmation = lambda a, b, c: -1,
+    )
+    def __init__(self, stock:str, management:Management=management):
         self.stock = stock
         self.market = HistoricalMarket(stock)
+        self.management = management
 
-    def run(self, conditions:list[Strategy]):
+    def print_stats(self):
+        self.management.print_stats()
+
+    def run(self, strategies:list[Strategy]):
         for days in range(len(self.market.full_data)):
             # Get next market data
             self.market.next()
+            price = self.market.data.iloc[-1]['Close']
+            date = self.market.data.index[-1]
 
             # Entry Points
-            for condition in conditions:
-                if condition.entry(self.market):
-                    self.runningtrade.append(Trade(self.market.data.index[-1], self.market.data.iloc[-1]['Close'], condition))
+            for strategy in strategies:
+                if strategy.entry(self.market):
+                    self.management.buy(date, price, strategy)
 
             # Exit Points
-            for trade in self.runningtrade:
+            for trade in self.management.running_trade:
                 if trade.exit(self.market):
-                    trade.close(self.market.data.index[-1], self.market.data.iloc[-1]['Close'])
-                    self.trade_list.append(trade)
-                    self.runningtrade.remove(trade)
-
-def entry(market:HistoricalMarket) -> bool:
-    market.full_data['CDL_ENGULFING'] = market.full_data.ta.cdl_pattern(name="engulfing")
-    print(market.full_data[market.full_data['CDL_ENGULFING'] == -100])
-    # print(market.full_data[market.full_data['Close'].isnull()])
-    return False
-
-def exit(market:HistoricalMarket) -> bool:
-    return False
-
-if __name__ == '__main__':
-    market = HistoricalMarket('TLKM')
-    entry(market)
-    # myStrategy = Strategy(
-    #     name = 'CandleStrategy',
-    #     entry_condition = entry,
-    #     exit_condition = exit
-    # )
-    # def entry(x:HistoricalMarket):
-    #     return x.data.iloc[-1]['Close'] > x.data.iloc[-1]['Open']
-    # stragegy = [
-    #     Strategy('basic', func, func)
-    # ]
-    # test = Backtest('TLKM')
-    # test.run(stragegy)
+                    self.management.sell(date, price, trade)
