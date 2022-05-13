@@ -4,7 +4,7 @@ import datetime
 
 # Module
 import core.dataprovider
-from core.backtest import Strategy, HistoricalMarket, Backtest, Trade
+from core.core import Strategy, HistoricalMarket, Backtest, Trade
 
 # Site Lib
 import pandas as pd
