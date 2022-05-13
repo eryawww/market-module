@@ -1,15 +1,12 @@
 import os
 import pandas as pd
-import logging
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(message)s',
-    filename= 'runtime.log',
-)
+import yfinance
 
 data_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+index_path = os.path.join(data_path, 'index')
 
+# TODO: Use dynamic index
+# Using index name from yfinance
 def get_market_data(stock:str) -> pd.DataFrame:
     """
         Get the data for the stock
@@ -35,11 +32,33 @@ def get_market_data(stock:str) -> pd.DataFrame:
 
 def verify_data(data:pd.DataFrame) -> pd.DataFrame:
     null_count = data.isnull().sum()
-    if null_count.sum() > 0:
-        logging.warning(f"{null_count} rows are null")
-        logging.warning(data[data.isnull().any(axis=1)])
     data = data.dropna()
     return data
 
+def download_data(symbol:str):
+    index = get_index_of(symbol)
+    symbol_code:str
+    if index == 'IDX':
+        symbol_code = symbol+'.JK'
+    else:
+        symbol_code = symbol
+    data = yfinance.download(symbol_code)
+    data.to_csv(os.path.join(data_path, index, symbol+'.csv'))
+
+def get_index_of(symbol:str):
+    for index in get_index_list():
+        if symbol in assets_list_from_index(index):
+            return index.removesuffix('.txt')
+    return None
+
+def assets_list_from_index(index:str) -> list:
+    if not '.txt' in index:
+        index += '.txt'
+    with open(os.path.join(index_path, index), 'r') as f:
+        return f.read().splitlines()
+
+def get_index_list():
+    return os.listdir(index_path)
+
 if __name__ == '__main__':
-    df = get_market_data('TLKM')
+    download_data('TLKM')
